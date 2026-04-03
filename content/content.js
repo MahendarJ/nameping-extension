@@ -18,12 +18,33 @@ chrome.storage.onChanged.addListener((changes, namespace) => {
   }
 });
 
-let lastProcessedText = "";
+let lastNameCount = 0;
 let isAlerting = false; // Prevent multiple overlapping alerts
 
-function isNameMatch(text, name) {
-  if (!name) return false;
-  return text.toLowerCase().includes(name);
+function countNameOccurrences(text, name) {
+  if (!name) return 0;
+  // Use regex with word boundaries and global flag 'g' to count all occurrences
+  const escapedName = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const regex = new RegExp(`\\b${escapedName}\\b`, 'gi');
+  const matches = text.match(regex);
+  return matches ? matches.length : 0;
+}
+
+function getSpokenText(container) {
+  // Google Meet captions have speaker blocks with an avatar <img> and the speaker's name.
+  // The actual spoken text is in a sibling element.
+  // By stripping out the container that holds the <img>, we completely discard the speaker names!
+  const clone = container.cloneNode(true);
+  
+  const imgs = clone.querySelectorAll('img');
+  imgs.forEach(img => {
+    const speakerInfoDiv = img.parentElement;
+    if (speakerInfoDiv && speakerInfoDiv.parentNode) {
+      speakerInfoDiv.parentNode.removeChild(speakerInfoDiv);
+    }
+  });
+
+  return clone.innerText || "";
 }
 
 function triggerAlert() {
@@ -78,12 +99,24 @@ function init() {
       
       console.log("✅ Captions container detected. Connecting observer.");
       currentObserver = new MutationObserver(() => {
-        const text = container.innerText.trim();
-        if (!text || text === lastProcessedText) return;
-        lastProcessedText = text;
+        // Only extract the actual spoken words (ignoring speaker names)
+        const text = getSpokenText(container).trim();
+        
+        if (!text) {
+          lastNameCount = 0;
+          return;
+        }
 
-        if (userName && isNameMatch(text, userName)) {
-          triggerAlert();
+        if (userName) {
+          const currentCount = countNameOccurrences(text, userName);
+
+          // If the name appears more times than before, trigger the alert!
+          if (currentCount > lastNameCount) {
+            triggerAlert();
+          }
+
+          // Sync the alert count down to match current occurrences (handles scrolling drops and rewrites)
+          lastNameCount = currentCount;
         }
       });
       
@@ -99,6 +132,7 @@ function init() {
         currentObserver = null;
       }
       currentContainer = null;
+      lastNameCount = 0;
     }
   }, 1000);
 }
